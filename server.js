@@ -120,7 +120,7 @@ function startServerGame(roomId) {
   io.to(roomId).emit('gameStart', {
     players: r.players.map(p=>({ id:p.id, name:p.name, color:p.color })),
     snakes:  Object.entries(r.snakes).map(([id,s])=>({ id, x:s.x, y:s.y, angle:s.angle, color:s.color, name:s.name })),
-    zone:    r.zone,
+    zone:    { cx:CX, cy:CY, radius:initialR, startRadius:initialR, endRadius:initialR*0.08 },
     pot:     ROOM_CFG[r.type].fee * r.players.length,
   });
 
