@@ -150,6 +150,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:#fff
 <body>
 <div class="scanlines"></div>
 <div class="bal-chip" id="balChip" onclick="showScreen('history')">💵 $100.00</div>
+<button onclick="rechargeBal()" style="position:fixed;top:.8rem;right:9rem;font-family:Orbitron,monospace;font-size:.65rem;font-weight:700;letter-spacing:.1em;color:var(--green);background:rgba(0,255,127,.08);border:1px solid rgba(0,255,127,.3);padding:.35rem .7rem;z-index:200;cursor:pointer;transition:.3s;" onmouseover="this.style.background='rgba(0,255,127,.2)'" onmouseout="this.style.background='rgba(0,255,127,.08)'">+ RECARREGAR</button>
 
 <!-- LANDING -->
 <div id="screen-landing" class="screen active">
@@ -262,6 +263,81 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:#fff
 </div>
 
 <script>
+// ═══ AUDIO SYSTEM ═══
+let audioCtx = null;
+let musicPlaying = false;
+let beatInt = null, melInt = null, noteIdx = 0;
+
+function initAudio(){
+  if(audioCtx) return;
+  audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+}
+
+function tone(freq, type, vol, dur, startFreq){
+  if(!audioCtx) return;
+  const o=audioCtx.createOscillator(), g=audioCtx.createGain();
+  o.type=type||'sine'; o.frequency.value=startFreq||freq;
+  if(startFreq) o.frequency.exponentialRampToValueAtTime(freq, audioCtx.currentTime+dur*.3);
+  g.gain.setValueAtTime(vol, audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime+dur);
+  o.connect(g); g.connect(audioCtx.destination);
+  o.start(); o.stop(audioCtx.currentTime+dur);
+}
+
+function noise(vol, dur, filterFreq){
+  if(!audioCtx) return;
+  const buf=audioCtx.createBuffer(1,audioCtx.sampleRate*dur,audioCtx.sampleRate);
+  const d=buf.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1);
+  const src=audioCtx.createBufferSource(), filt=audioCtx.createBiquadFilter(), g=audioCtx.createGain();
+  filt.type='lowpass'; filt.frequency.value=filterFreq||800;
+  g.gain.setValueAtTime(vol,audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+dur);
+  src.buffer=buf; src.connect(filt); filt.connect(g); g.connect(audioCtx.destination); src.start();
+}
+
+function playSparkSFX(){
+  if(!audioCtx) return;
+  tone(1200,'sine',.08,.07,700);
+}
+
+function playDeathSFX(){
+  if(!audioCtx) return;
+  tone(90,'sawtooth',.3,.5,180);
+  noise(.25,.3,400);
+  setTimeout(()=>tone(45,'sine',.15,.4),80);
+}
+
+function playEncircleSFX(){
+  if(!audioCtx) return;
+  tone(440,'square',.12,.1);
+  setTimeout(()=>tone(660,'square',.12,.1),100);
+  setTimeout(()=>tone(880,'square',.15,.2),200);
+}
+
+// Lobby ambient music
+const LOBBY_SEQ=[130.81,164.81,196,246.94,196,164.81,130.81,98];
+function startLobbyMusic(){
+  if(!audioCtx) return; stopMusic(); musicPlaying=true; noteIdx=0;
+  function step(){ if(!musicPlaying) return; tone(LOBBY_SEQ[noteIdx%LOBBY_SEQ.length],'sine',.035,.55); noteIdx++; }
+  step(); beatInt=setInterval(step,520);
+}
+
+// Game adrenaline music
+const GAME_MEL=[220,277,330,370,330,247,220,185];
+function startGameMusic(){
+  if(!audioCtx) return; stopMusic(); musicPlaying=true; noteIdx=0;
+  function beat(){ if(!musicPlaying) return; tone(80,'square',.07,.12); }
+  function mel(){ if(!musicPlaying) return; tone(GAME_MEL[noteIdx%GAME_MEL.length],'sawtooth',.03,.18); noteIdx++; }
+  beat(); beatInt=setInterval(beat,300);
+  setTimeout(()=>{ mel(); melInt=setInterval(mel,220); },150);
+}
+
+function stopMusic(){
+  musicPlaying=false;
+  if(beatInt){clearInterval(beatInt);beatInt=null;}
+  if(melInt){clearInterval(melInt);melInt=null;}
+}
+
 // ═══ MULTIPLAYER ═══
 const socket = io();
 let myId = null;
@@ -397,6 +473,7 @@ class Snake{
     this.w=Math.min(this.w+(isDeath?DWG:SWG),MW);
     this.mT=Math.min(this.mT+(isDeath?DTG:STG),300);
     this.se++;
+    if(this.isP) playSparkSFX();
     for(let i=0;i<6;i++) parts.push(new Part(this.x,this.y,isDeath?'#ff6b00':'#ffd700',4));
   }
   die(){
@@ -406,6 +483,7 @@ class Snake{
     for(let i=0;i<35;i++) parts.push(new Part(this.x,this.y,this.col,8));
     swaves.push({x:this.x,y:this.y,r:this.w,maxR:this.w*4+40,a:1,col:this.col});
     shake(5,250);
+    playDeathSFX();
   }
   ai(dt){
     if(!this.alive)return;this.aiT-=dt;
@@ -671,7 +749,7 @@ function checkEncirclement(){
           }
         }
         // If player encircled someone, screen shake
-        if(trapped&&enc.isP) shake(10,350);
+        if(trapped&&enc.isP){ shake(10,350); playEncircleSFX(); }
         break;
       }
     }
@@ -685,36 +763,42 @@ function checkEncirclement(){
 function draw(){
   const W=canvas.width,H=canvas.height;ctx.save();
   if(shakeD>0&&shakeA>0)ctx.translate((Math.random()-.5)*shakeA,(Math.random()-.5)*shakeA);
-  ctx.clearRect(-20,-20,W+40,H+40);ctx.fillStyle='#030308';ctx.fillRect(-20,-20,W+40,H+40);
-  ctx.save();ctx.strokeStyle='rgba(0,245,255,.032)';ctx.lineWidth=.5;
+  ctx.clearRect(-20,-20,W+40,H+40);
+  ctx.fillStyle='#030308';ctx.fillRect(-20,-20,W+40,H+40);
+  // Grid clipped dentro da zona
+  ctx.save();ctx.beginPath();ctx.arc(zone.cx,zone.cy,zone.r,0,Math.PI*2);ctx.clip();
+  ctx.strokeStyle='rgba(0,245,255,.032)';ctx.lineWidth=.5;
   for(let x=0;x<W;x+=55){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
-  for(let y=0;y<H;y+=55){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}ctx.restore();
-  ctx.save();ctx.fillStyle='rgba(255,23,68,.07)';ctx.fillRect(0,0,W,H);ctx.globalCompositeOperation='destination-out';ctx.beginPath();ctx.arc(zone.cx,zone.cy,zone.r,0,Math.PI*2);ctx.fill();ctx.globalCompositeOperation='source-over';ctx.restore();
-  const gp=.38+Math.sin(Date.now()/370)*.28;
-  ctx.save();ctx.beginPath();ctx.arc(zone.cx,zone.cy,zone.r,0,Math.PI*2);ctx.strokeStyle=`rgba(0,245,255,${.32+gp*.32})`;ctx.lineWidth=2.2;ctx.shadowColor='#00f5ff';ctx.shadowBlur=15+gp*15;ctx.stroke();
-  ctx.beginPath();ctx.arc(zone.cx,zone.cy,zone.r-6,0,Math.PI*2);ctx.strokeStyle=`rgba(0,245,255,${.07+gp*.05})`;ctx.lineWidth=6;ctx.shadowBlur=0;ctx.stroke();ctx.restore();
+  for(let y=0;y<H;y+=55){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+  ctx.restore();
+  // Conteúdo do jogo
   for(const sp of sparks) sp.draw(ctx);
   for(const p of pups) p.draw(ctx);
   for(const p of parts) p.draw(ctx);
-  // Encirclement flash
   for(const f of encircleFlashes){
     if(f.pts.length<3) continue;
-    ctx.save();
-    ctx.globalAlpha=f.alpha*0.35;
-    ctx.fillStyle=f.color;
-    ctx.shadowColor=f.color;ctx.shadowBlur=30;
-    ctx.beginPath();ctx.moveTo(f.pts[0].x,f.pts[0].y);
-    for(let i=1;i<f.pts.length;i++) ctx.lineTo(f.pts[i].x,f.pts[i].y);
-    ctx.closePath();ctx.fill();
-    ctx.globalAlpha=f.alpha;
-    ctx.strokeStyle=f.color;ctx.lineWidth=3;ctx.stroke();
-    ctx.restore();
+    ctx.save();ctx.globalAlpha=f.alpha*.35;ctx.fillStyle=f.color;ctx.shadowColor=f.color;ctx.shadowBlur=30;
+    ctx.beginPath();ctx.moveTo(f.pts[0].x,f.pts[0].y);for(let i=1;i<f.pts.length;i++) ctx.lineTo(f.pts[i].x,f.pts[i].y);
+    ctx.closePath();ctx.fill();ctx.globalAlpha=f.alpha;ctx.strokeStyle=f.color;ctx.lineWidth=3;ctx.stroke();ctx.restore();
   }
   for(const sw of swaves){ctx.save();ctx.globalAlpha=sw.a;ctx.strokeStyle=sw.col;ctx.lineWidth=2.8;ctx.shadowColor=sw.col;ctx.shadowBlur=18;ctx.beginPath();ctx.arc(sw.x,sw.y,sw.r,0,Math.PI*2);ctx.stroke();ctx.restore();}
   for(const s of snakes){if(!s.alive&&s.trail.length>1){ctx.save();ctx.globalAlpha=.09;ctx.strokeStyle=s.col;ctx.lineWidth=s.w*.38;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(s.trail[0].x,s.trail[0].y);for(let i=1;i<Math.min(s.trail.length,22);i++)ctx.lineTo(s.trail[i].x,s.trail[i].y);ctx.stroke();ctx.restore();}}
   if(spec&&specTgt?.alive){ctx.save();ctx.globalAlpha=.18;ctx.strokeStyle='#fff';ctx.lineWidth=specTgt.w+7;ctx.lineCap='round';ctx.beginPath();ctx.arc(specTgt.trail[0].x,specTgt.trail[0].y,specTgt.w+11,0,Math.PI*2);ctx.stroke();ctx.restore();}
   for(const s of snakes) s.draw(ctx);
   if(isMultiplayer) drawRemotePlayers(ctx);
+  // PRETO FORA DA ZONA (arena fecha ficando preta)
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0,0,W,H);
+  ctx.arc(zone.cx,zone.cy,zone.r,0,Math.PI*2,true); // buraco na zona
+  ctx.fillStyle='#000000';
+  ctx.fill('evenodd');
+  ctx.restore();
+  // Borda da zona
+  const gp=.38+Math.sin(Date.now()/370)*.28;
+  ctx.save();ctx.beginPath();ctx.arc(zone.cx,zone.cy,zone.r,0,Math.PI*2);
+  ctx.strokeStyle=`rgba(0,245,255,${.5+gp*.4})`;ctx.lineWidth=3;ctx.shadowColor='#00f5ff';ctx.shadowBlur=20+gp*20;ctx.stroke();ctx.restore();
+  // Timer bar
   const tl=Math.max(0,GDUR-gt);ctx.save();ctx.fillStyle='rgba(0,245,255,.06)';ctx.fillRect(0,H-3,W,3);ctx.fillStyle=`rgba(0,245,255,${.22+(1-tl/GDUR)*.32})`;ctx.fillRect(0,H-3,(tl/GDUR)*W,3);ctx.restore();
   ctx.restore();
 }
@@ -869,6 +953,10 @@ function showScreen(id){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.getElementById('screen-'+id).classList.add('active');
   if(id==='history')renderHist();if(id==='skin')buildSkinUI();updBalUI();
+  initAudio();
+  if(id==='lobby'||id==='landing'||id==='skin') startLobbyMusic();
+  else if(id==='game') startGameMusic();
+  else stopMusic();
 }
 
 function buildRooms(){
@@ -887,7 +975,13 @@ function buildRooms(){
     </div>`;
   });
 }
-function noFunds(){const f=document.createElement('div');f.style.cssText='position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(255,23,68,.14);border:1px solid var(--red);color:var(--red);font-family:Orbitron,monospace;font-size:.85rem;letter-spacing:.12em;padding:.9rem 1.8rem;z-index:1000;pointer-events:none;';f.textContent='⛔ SALDO INSUFICIENTE';document.body.appendChild(f);setTimeout(()=>f.remove(),1800);}
+function rechargeBal(){
+  setBal(getBal()+100);updBalUI();
+  const f=document.createElement('div');
+  f.style.cssText='position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);font-family:Orbitron,monospace;font-size:1.2rem;font-weight:700;color:var(--green);background:rgba(0,255,127,.1);border:1px solid var(--green);padding:1rem 2rem;z-index:1000;pointer-events:none;letter-spacing:.15em;text-shadow:0 0 20px var(--green);';
+  f.textContent='+$100.00 RECARREGADO!';document.body.appendChild(f);
+  setTimeout(()=>f.remove(),1800);
+}const f=document.createElement('div');f.style.cssText='position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(255,23,68,.14);border:1px solid var(--red);color:var(--red);font-family:Orbitron,monospace;font-size:.85rem;letter-spacing:.12em;padding:.9rem 1.8rem;z-index:1000;pointer-events:none;';f.textContent='⛔ SALDO INSUFICIENTE';document.body.appendChild(f);setTimeout(()=>f.remove(),1800);}
 function runCD(){
   const el=document.getElementById('cdNum');let n=3;el.textContent=n;el.className='cdnum';
   const iv=setInterval(()=>{n--;if(n>0){el.textContent=n;el.className='';void el.offsetWidth;el.className='cdnum';}else if(n===0){el.textContent='GO!';el.className='cdgo';}else{clearInterval(iv);startGame();}},850);
