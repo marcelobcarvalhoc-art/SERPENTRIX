@@ -330,23 +330,25 @@ socket.on('countdown', ({ secs }) => {
 
 socket.on('gameStart', ({ players, snakes: initSnakes, zone: initZone, pot: sp }) => {
   if (sp) pot = sp;
+  if (initZone) srvZoneStart = initZone.startRadius || initZone.radius || 405;
   serverSnakes = {};
   initSnakes.forEach(s => { serverSnakes[s.id] = {...s, trail:[{x:s.x,y:s.y}]}; });
-  if (initZone) { zone.cx=initZone.cx; zone.cy=initZone.cy; zone.radius=initZone.radius; zone.startRadius=initZone.startRadius; zone.endRadius=initZone.endRadius; }
   startGame();
 });
 
 // Main game state from server — update all snakes
+let srvZoneStart=405; // raio inicial da zona no servidor (ARENA*0.45)
+
 socket.on('tick',({snakes:ss,sparks:sp,zone:z,alive:al})=>{
   if(!isMultiplayer)return;
   if(z&&canvas){
-    const scl=Math.min(canvas.width,canvas.height)/900;
-    zone.r=z.radius*scl;
+    // Usa proporção da zona servidor para escalar na tela local
+    const ratio=z.radius/srvZoneStart;
+    zone.r=zone.sr*ratio; // zone.sr = diagonal da tela (cobertura total)
   }
   if(al!==undefined)aliveCount=al;
   if(sp)serverSparks=sp;
   ss.forEach(s=>{
-    // Preserva color e name do gameStart — tick não os reenvia
     const prev=serverSnakes[s.id]||{};
     serverSnakes[s.id]={color:prev.color||s.color,name:prev.name||s.name,...s};
     if(s.id===myId){
@@ -755,8 +757,11 @@ function gloop(ts){
 }
 
 function upd(dt){
-  const sp=Math.min(1,gt/GDUR);zone.r=zone.sr+(zone.er-zone.sr)*sp;
-  const c30=Math.floor(gt/30);if(c30>zwarn&&gt>5){zwarn=c30;zoneFlash();}
+  // Em multiplayer: zona é controlada pelo servidor via tick
+  if(!isMultiplayer){
+    const sp=Math.min(1,gt/GDUR);zone.r=zone.sr+(zone.er-zone.sr)*sp;
+    const c30=Math.floor(gt/30);if(c30>zwarn&&gt>5){zwarn=c30;zoneFlash();}
+  }
   nextPU-=dt;if(nextPU<=0){spawnPUp();nextPU=PUI+(Math.random()-.5)*4;}
   if(shakeD>0){shakeD-=dt*1000;if(shakeD<=0){shakeA=0;shakeD=0;}}
   // Em multiplayer: apenas move a cobra do jogador, server cuida do resto
@@ -766,9 +771,12 @@ function upd(dt){
   } else {
     for(const s of snakes){if(!s.alive)continue;if(s.isP&&!spec)s.steer(mx,my);else if(!s.isP)s.ai(dt);s.move(dt);}
   }
-  for(const s of snakes){
-    if(!s.alive)continue;const d=Math.hypot(s.x-zone.cx,s.y-zone.cy);
-    if(d>zone.r){s.ot+=dt;if(s.ot>=ZGRACE)kill(s,null,'zona');}else s.ot=Math.max(0,s.ot-dt*.4);
+  // Zona: em multiplayer o servidor decide mortes, não o cliente
+  if(!isMultiplayer){
+    for(const s of snakes){
+      if(!s.alive)continue;const d=Math.hypot(s.x-zone.cx,s.y-zone.cy);
+      if(d>zone.r){s.ot+=dt;if(s.ot>=ZGRACE)kill(s,null,'zona');}else s.ot=Math.max(0,s.ot-dt*.4);
+    }
   }
   for(const s of snakes){
     if(!s.alive)continue;const hr=s.w*.5+4;
