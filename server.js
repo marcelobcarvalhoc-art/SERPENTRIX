@@ -7,7 +7,17 @@ const app    = express();
 const server = http.createServer(app);
 const io     = new Server(server, { cors: { origin: '*' } });
 
+// Serve from /public if exists, otherwise from root
 app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname)));
+app.get('/', (req, res) => {
+  const fs = require('fs');
+  const pub = path.join(__dirname, 'public', 'index.html');
+  const root = path.join(__dirname, 'index.html');
+  if (fs.existsSync(pub)) res.sendFile(pub);
+  else if (fs.existsSync(root)) res.sendFile(root);
+  else res.send('SERPENTRIX — index.html não encontrado');
+});
 
 // ── ROOM CONFIG ──────────────────────────────
 const ROOM_TYPES = {
