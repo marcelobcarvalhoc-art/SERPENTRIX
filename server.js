@@ -195,6 +195,7 @@ function serverTick(roomId, dt) {
     zone:   { radius: r.zone.radius },
     snakes: Object.entries(r.snakes).map(([id,s]) => ({
       id, x:s.x, y:s.y, angle:s.angle, w:s.w, alive:s.alive,
+      color:s.color, name:s.name,
       trail: s.trail.filter((_,i)=>i%4===0).slice(0,35),
     })),
     sparks: r.sparks.slice(0,80),
@@ -205,10 +206,16 @@ function serverTick(roomId, dt) {
   const living = alive();
   if (living.length <= 1 || r.gameTime >= GDUR) {
     clearInterval(r.gameLoop); r.gameLoop = null;
-    const winner = living[0] ? living[0][0] : null;
+    let winnerId = null;
+    if (living.length === 1) {
+      winnerId = living[0][0];
+    } else if (living.length > 1) {
+      // Tempo esgotado: quem cresceu mais (mT = trail length) vence
+      winnerId = living.sort((a,b) => b[1].mT - a[1].mT)[0][0];
+    }
     io.to(roomId).emit('playerWon', {
-      id:   winner,
-      name: winner ? r.snakes[winner].name : null,
+      id:   winnerId,
+      name: winnerId ? r.snakes[winnerId].name : null,
     });
   }
 }
