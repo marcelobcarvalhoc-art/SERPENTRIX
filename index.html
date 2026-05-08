@@ -952,7 +952,10 @@ function rechargeBal(){
   f.style.cssText='position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);font-family:Orbitron,monospace;font-size:1.2rem;font-weight:700;color:var(--green);background:rgba(0,255,127,.1);border:1px solid var(--green);padding:1rem 2rem;z-index:1000;pointer-events:none;letter-spacing:.15em;text-shadow:0 0 20px var(--green);';
   f.textContent='+$100.00 RECARREGADO!';document.body.appendChild(f);
   setTimeout(()=>f.remove(),1800);
-}const f=document.createElement('div');f.style.cssText='position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(255,23,68,.14);border:1px solid var(--red);color:var(--red);font-family:Orbitron,monospace;font-size:.85rem;letter-spacing:.12em;padding:.9rem 1.8rem;z-index:1000;pointer-events:none;';f.textContent='⛔ SALDO INSUFICIENTE';document.body.appendChild(f);setTimeout(()=>f.remove(),1800);}
+}
+function noFunds(){
+  const f=document.createElement('div');f.style.cssText='position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(255,23,68,.14);border:1px solid var(--red);color:var(--red);font-family:Orbitron,monospace;font-size:.85rem;letter-spacing:.12em;padding:.9rem 1.8rem;z-index:1000;pointer-events:none;';f.textContent='⛔ SALDO INSUFICIENTE';document.body.appendChild(f);setTimeout(()=>f.remove(),1800);
+}
 function runCD(){
   const el=document.getElementById('cdNum');let n=3;el.textContent=n;el.className='cdnum';
   const iv=setInterval(()=>{n--;if(n>0){el.textContent=n;el.className='';void el.offsetWidth;el.className='cdnum';}else if(n===0){el.textContent='GO!';el.className='cdgo';}else{clearInterval(iv);startGame();}},850);
