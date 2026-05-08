@@ -308,35 +308,104 @@ function stopMusic(){ try{ musicPlaying=false; if(beatInt){clearInterval(beatInt
 // ═══ MULTIPLAYER ═══
 const socket = io();
 let myId = null;
-let remotePlayers = {};
 let isMultiplayer = false;
+let serverSnakes = {}; // id -> server snake state
+let serverSparks = [];
+let inputInterval = null;
 
 socket.on('connect', () => { myId = socket.id; });
 socket.on('roomJoined', d => { myId = d.playerId; isMultiplayer = true; });
+
 socket.on('lobbyUpdate', ({ players, maxPlayers }) => {
   const el = document.getElementById('mpCount');
   if (el) el.textContent = `👥 ${players.length}/${maxPlayers} online`;
 });
+
 socket.on('countdown', ({ secs }) => {
   const el = document.getElementById('cdNum');
   if (!el) return;
   if (secs === 0) { el.textContent = 'GO!'; el.className = 'cdgo'; }
   else { el.textContent = secs; el.className = ''; void el.offsetWidth; el.className = 'cdnum'; }
 });
-socket.on('gameStart', ({ players, pot: sp }) => {
+
+socket.on('gameStart', ({ players, snakes: initSnakes, zone: initZone, pot: sp }) => {
   if (sp) pot = sp;
-  remotePlayers = {};
-  players.forEach(p => { if (p.id !== myId) remotePlayers[p.id] = {x:0,y:0,ang:0,trail:[],w:BW,col:p.color,nm:p.name,alive:true}; });
+  serverSnakes = {};
+  initSnakes.forEach(s => { serverSnakes[s.id] = {...s, trail:[{x:s.x,y:s.y}]}; });
+  if (initZone) { zone.cx=initZone.cx; zone.cy=initZone.cy; zone.radius=initZone.radius; zone.startRadius=initZone.startRadius; zone.endRadius=initZone.endRadius; }
   startGame();
 });
-socket.on('state', ({ id, x, y, ang, w, trail }) => {
-  if (!remotePlayers[id]) return;
-  Object.assign(remotePlayers[id], { x, y, ang, w });
-  if (trail?.length) remotePlayers[id].trail = trail;
+
+// Main game state from server — update all snakes
+socket.on('tick', ({ snakes: ss, sparks: sp, zone: z, time: t, alive: al }) => {
+  if (!isMultiplayer) return;
+  if (z) zone.radius = z.radius;
+  if (al !== undefined) aliveCount = al;
+  if (sp) serverSparks = sp;
+  ss.forEach(s => {
+    serverSnakes[s.id] = s;
+    // Sync my own snake position from server
+    if (s.id === myId) {
+      const me = snakes.find(sn => sn.isP);
+      if (me && me.alive && !s.alive) { me.alive = false; playerDied = true; isSpectating = true; }
+    }
+  });
 });
-socket.on('playerDied',  ({ id }) => { if (remotePlayers[id]) remotePlayers[id].alive = false; });
-socket.on('playerLeft',  ({ id }) => { delete remotePlayers[id]; });
-socket.on('playerWon',   ({ id }) => { endGame(id === myId ? snakes.find(s=>s.isP)||null : null); });
+
+// Server-authoritative death
+socket.on('snakeDied', ({ id, reason }) => {
+  if (id === myId) {
+    const me = snakes.find(s => s.isP);
+    if (me) { me.alive = false; }
+    playerDied = true; isSpectating = true;
+    playDeathSFX();
+    addK(`Você morreu (${reason})`,'','var(--red)');
+    specTgt = null; updSpec();
+  } else {
+    if (serverSnakes[id]) serverSnakes[id].alive = false;
+    playDeathSFX();
+  }
+});
+
+// Server declares SINGLE winner
+socket.on('playerWon', ({ id, name }) => {
+  const me = snakes.find(s => s.isP);
+  endGame(id === myId ? me : null);
+});
+
+function sendInput() {
+  const me = snakes.find(s => s.isP && s.alive);
+  if (!me || !isMultiplayer) return;
+  socket.emit('input', { targetAngle: me.tAng, boosting });
+}
+
+function drawServerSnakes(c) {
+  for (const [id, s] of Object.entries(serverSnakes)) {
+    if (!s.alive || id === myId || !s.trail || s.trail.length < 2) continue;
+    c.save();
+    c.shadowColor=s.color; c.shadowBlur=s.w*.5; c.strokeStyle=s.color;
+    c.lineWidth=s.w; c.lineCap='round'; c.lineJoin='round'; c.globalAlpha=.88;
+    c.beginPath(); c.moveTo(s.trail[0].x, s.trail[0].y);
+    for (let i=1; i<s.trail.length; i++) c.lineTo(s.trail[i].x, s.trail[i].y);
+    c.stroke();
+    c.fillStyle='#fff'; c.shadowBlur=s.w*.6;
+    c.beginPath(); c.arc(s.trail[0].x, s.trail[0].y, s.w*.28, 0, Math.PI*2); c.fill();
+    c.shadowBlur=0; c.globalAlpha=.8;
+    c.font=`bold ${Math.max(8,Math.min(11,s.w*.6))}px Rajdhani`;
+    c.textAlign='center'; c.fillStyle=s.isBot?'rgba(255,255,255,.6)':'#fff';
+    c.fillText(s.name, s.trail[0].x, s.trail[0].y-s.w*.62-2);
+    c.restore();
+  }
+}
+
+function drawServerSparks(c) {
+  for (const sp of serverSparks) {
+    const col = sp.isDeath?'#ff6b00':'#ffd700';
+    c.save(); c.fillStyle=col; c.shadowColor=col; c.shadowBlur=sp.sz*1.5; c.globalAlpha=.8;
+    c.beginPath(); c.arc(sp.x, sp.y, sp.sz*.5, 0, Math.PI*2); c.fill();
+    c.restore();
+  }
+}
 
 function sendMyState() {
   const pl = snakes.find(s => s.isP && s.alive);
@@ -619,7 +688,7 @@ function gloop(ts){
   if(!gactive)return;if(!lt)lt=ts;
   const dt=Math.min((ts-lt)/1000,.05);lt=ts;gt+=dt;
   upd(dt);draw();updHUD();
-  if(isMultiplayer && Math.floor(gt*20)!==Math.floor((gt-dt)*20)) sendMyState();
+  if(isMultiplayer && Math.floor(gt*20)!==Math.floor((gt-dt)*20)) sendInput();
   aid=requestAnimationFrame(gloop);
 }
 
@@ -628,7 +697,13 @@ function upd(dt){
   const c30=Math.floor(gt/30);if(c30>zwarn&&gt>5){zwarn=c30;zoneFlash();}
   nextPU-=dt;if(nextPU<=0){spawnPUp();nextPU=PUI+(Math.random()-.5)*4;}
   if(shakeD>0){shakeD-=dt*1000;if(shakeD<=0){shakeA=0;shakeD=0;}}
-  for(const s of snakes){if(!s.alive)continue;if(s.isP&&!spec)s.steer(mx,my);else if(!s.isP)s.ai(dt);s.move(dt);}
+  // Em multiplayer: apenas move a cobra do jogador, server cuida do resto
+  if(isMultiplayer){
+    const me=snakes.find(s=>s.isP&&s.alive);
+    if(me){if(!spec)me.steer(mx,my);me.move(dt);}
+  } else {
+    for(const s of snakes){if(!s.alive)continue;if(s.isP&&!spec)s.steer(mx,my);else if(!s.isP)s.ai(dt);s.move(dt);}
+  }
   for(const s of snakes){
     if(!s.alive)continue;const d=Math.hypot(s.x-zone.cx,s.y-zone.cy);
     if(d>zone.r){s.ot+=dt;if(s.ot>=ZGRACE)kill(s,null,'zona');}else s.ot=Math.max(0,s.ot-dt*.4);
@@ -672,7 +747,7 @@ function upd(dt){
   checkEncirclement();
 
   if(spec&&!specTgt?.alive){specTgt=snakes.filter(s=>s.alive).sort((a,b)=>b.w-a.w)[0]||null;updSpec();}
-  const lv=snakes.filter(s=>s.alive);if(lv.length<=1||gt>=GDUR)endGame(lv[0]||null);
+  if(!isMultiplayer){ const lv=snakes.filter(s=>s.alive);if(lv.length<=1||gt>=GDUR)endGame(lv[0]||null); }
 }
 
 // ═══ ENCIRCLEMENT ═══
@@ -752,7 +827,7 @@ function draw(){
   for(const s of snakes){if(!s.alive&&s.trail.length>1){ctx.save();ctx.globalAlpha=.09;ctx.strokeStyle=s.col;ctx.lineWidth=s.w*.38;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(s.trail[0].x,s.trail[0].y);for(let i=1;i<Math.min(s.trail.length,22);i++)ctx.lineTo(s.trail[i].x,s.trail[i].y);ctx.stroke();ctx.restore();}}
   if(spec&&specTgt?.alive){ctx.save();ctx.globalAlpha=.18;ctx.strokeStyle='#fff';ctx.lineWidth=specTgt.w+7;ctx.lineCap='round';ctx.beginPath();ctx.arc(specTgt.trail[0].x,specTgt.trail[0].y,specTgt.w+11,0,Math.PI*2);ctx.stroke();ctx.restore();}
   for(const s of snakes) s.draw(ctx);
-  if(isMultiplayer) drawRemotePlayers(ctx);
+  if(isMultiplayer){ drawServerSnakes(ctx); drawServerSparks(ctx); }
   // PRETO FORA DA ZONA (arena fecha ficando preta)
   ctx.save();
   ctx.beginPath();
