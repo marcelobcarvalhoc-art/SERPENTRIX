@@ -124,7 +124,7 @@ function startServerGame(roomId) {
     pot:     ROOM_CFG[r.type].fee * r.players.length,
   });
 
-  r.gameLoop = setInterval(() => serverTick(roomId, 0.05), 50);
+  r.gameLoop = setInterval(() => serverTick(roomId, 1/30), 33);
 }
 
 function serverTick(roomId, dt) {
@@ -173,7 +173,7 @@ function serverTick(roomId, dt) {
       if (i===j) continue;
       const [idB,b] = al[j]; if (!b.alive) continue;
       for (let k=8; k<b.trail.length-1; k++) {
-        if (Math.hypot(a.x-b.trail[k].x, a.y-b.trail[k].y) < (a.w+b.w)*0.46) {
+        if (Math.hypot(a.x-b.trail[k].x, a.y-b.trail[k].y) < (a.w+b.w)*0.55) {
           serverKill(roomId, idA, idB, 'colisão'); break;
         }
       }
@@ -210,8 +210,8 @@ function serverTick(roomId, dt) {
     if (living.length === 1) {
       winnerId = living[0][0];
     } else if (living.length > 1) {
-      // Tempo esgotado: quem cresceu mais (mT = trail length) vence
-      winnerId = living.sort((a,b) => b[1].mT - a[1].mT)[0][0];
+      // Quem cresceu mais (maior trail) vence por tempo
+      winnerId = living.sort((a,b) => (b[1].mT||50) - (a[1].mT||50))[0][0];
     }
     io.to(roomId).emit('playerWon', {
       id:   winnerId,
@@ -247,13 +247,15 @@ io.on('connection', socket => {
     if (r.players.length >= 2 && !r.countdownTimer) startCountdown(myRoomId);
   });
 
-  socket.on('input', ({ targetAngle, x, y, angle, w, trail }) => {
+  socket.on('input', (data) => {
+    const { targetAngle, x, y, angle, w, mT, trail } = data;
     if (!myRoomId) return;
     const r = rooms[myRoomId]; if (!r?.snakes) return;
     const s = r.snakes[socket.id]; if (!s?.alive) return;
     // Use client-reported position (client is authoritative for own movement)
     if (x !== undefined) { s.x=x; s.y=y; s.angle=angle; }
-    if (w !== undefined) s.w = w;
+    if (w  !== undefined) s.w  = w;
+    if (typeof mT !== 'undefined') s.mT = mT;
     if (trail?.length) s.trail = trail;
     s.targetAngle = targetAngle;
   });
