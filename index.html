@@ -337,17 +337,20 @@ socket.on('gameStart', ({ players, snakes: initSnakes, zone: initZone, pot: sp }
 });
 
 // Main game state from server — update all snakes
-socket.on('tick', ({ snakes: ss, sparks: sp, zone: z, time: t, alive: al }) => {
-  if (!isMultiplayer) return;
-  if (z) zone.radius = z.radius;
-  if (al !== undefined) aliveCount = al;
-  if (sp) serverSparks = sp;
-  ss.forEach(s => {
-    serverSnakes[s.id] = s;
-    // Sync my own snake position from server
-    if (s.id === myId) {
-      const me = snakes.find(sn => sn.isP);
-      if (me && me.alive && !s.alive) { me.alive = false; playerDied = true; isSpectating = true; }
+socket.on('tick',({snakes:ss,sparks:sp,zone:z,alive:al})=>{
+  if(!isMultiplayer)return;
+  if(z&&canvas){
+    // Escala raio do servidor (0-900) para tela do cliente
+    const scl=Math.min(canvas.width,canvas.height)/900;
+    zone.r=z.radius*scl;
+  }
+  if(al!==undefined)aliveCount=al;
+  if(sp)serverSparks=sp;
+  ss.forEach(s=>{
+    serverSnakes[s.id]=s;
+    if(s.id===myId){
+      const me=snakes.find(sn=>sn.isP);
+      if(me&&me.alive&&!s.alive){me.alive=false;playerDied=true;isSpectating=true;}
     }
   });
 });
@@ -373,36 +376,54 @@ socket.on('playerWon', ({ id, name }) => {
   endGame(id === myId ? me : null);
 });
 
-function sendInput() {
-  const me = snakes.find(s => s.isP && s.alive);
-  if (!me || !isMultiplayer) return;
-  socket.emit('input', { targetAngle: me.tAng, boosting });
+// Escala coords servidor (900x900) → tela do cliente
+const SRV=900;
+function scaleX(sx){ return (sx/SRV)*canvas.width; }
+function scaleY(sy){ return (sy/SRV)*canvas.height; }
+function toSrvX(cx){ return (cx/canvas.width)*SRV; }
+function toSrvY(cy){ return (cy/canvas.height)*SRV; }
+
+function sendInput(){
+  const me=snakes.find(s=>s.isP&&s.alive);
+  if(!me||!isMultiplayer)return;
+  // Envia posição real do cliente (em coords de servidor)
+  const trail=me.trail.filter((_,i)=>i%5===0).slice(0,30).map(p=>({x:toSrvX(p.x),y:toSrvY(p.y)}));
+  socket.emit('input',{
+    targetAngle:me.tAng,
+    x:toSrvX(me.x), y:toSrvY(me.y),
+    angle:me.ang, w:me.w,
+    trail
+  });
 }
 
-function drawServerSnakes(c) {
-  for (const [id, s] of Object.entries(serverSnakes)) {
-    if (!s.alive || id === myId || !s.trail || s.trail.length < 2) continue;
+function drawServerSnakes(c){
+  for(const[id,s] of Object.entries(serverSnakes)){
+    if(!s.alive||id===myId||!s.trail||s.trail.length<2)continue;
+    // Escala coords servidor → tela
+    const trail=s.trail.map(p=>({x:scaleX(p.x),y:scaleY(p.y)}));
+    const hx=scaleX(s.x),hy=scaleY(s.y);
     c.save();
-    c.shadowColor=s.color; c.shadowBlur=s.w*.5; c.strokeStyle=s.color;
-    c.lineWidth=s.w; c.lineCap='round'; c.lineJoin='round'; c.globalAlpha=.88;
-    c.beginPath(); c.moveTo(s.trail[0].x, s.trail[0].y);
-    for (let i=1; i<s.trail.length; i++) c.lineTo(s.trail[i].x, s.trail[i].y);
+    c.shadowColor=s.color;c.shadowBlur=s.w*.5;c.strokeStyle=s.color;
+    c.lineWidth=s.w;c.lineCap='round';c.lineJoin='round';c.globalAlpha=.88;
+    c.beginPath();c.moveTo(trail[0].x,trail[0].y);
+    for(let i=1;i<trail.length;i++)c.lineTo(trail[i].x,trail[i].y);
     c.stroke();
-    c.fillStyle='#fff'; c.shadowBlur=s.w*.6;
-    c.beginPath(); c.arc(s.trail[0].x, s.trail[0].y, s.w*.28, 0, Math.PI*2); c.fill();
+    c.fillStyle='#fff';c.shadowBlur=s.w*.6;
+    c.beginPath();c.arc(trail[0].x,trail[0].y,s.w*.28,0,Math.PI*2);c.fill();
     c.shadowBlur=0;c.globalAlpha=.95;
     c.font=`bold ${Math.max(14,Math.min(22,s.w*.9+10))}px Rajdhani`;
     c.textAlign='center';c.fillStyle='#fff';c.shadowColor=s.color;c.shadowBlur=8;
-    c.fillText(s.name, s.trail[0].x, s.trail[0].y-s.w*.7-5);
+    c.fillText(s.name,trail[0].x,trail[0].y-s.w*.7-5);
     c.restore();
   }
 }
 
-function drawServerSparks(c) {
-  for (const sp of serverSparks) {
-    const col = sp.isDeath?'#ff6b00':'#ffd700';
-    c.save(); c.fillStyle=col; c.shadowColor=col; c.shadowBlur=sp.sz*1.5; c.globalAlpha=.8;
-    c.beginPath(); c.arc(sp.x, sp.y, sp.sz*.5, 0, Math.PI*2); c.fill();
+function drawServerSparks(c){
+  for(const sp of serverSparks){
+    const px=scaleX(sp.x),py=scaleY(sp.y);
+    const col=sp.isDeath?'#ff6b00':'#ffd700';
+    c.save();c.fillStyle=col;c.shadowColor=col;c.shadowBlur=sp.sz*1.5;c.globalAlpha=.8;
+    c.beginPath();c.arc(px,py,sp.sz*.5,0,Math.PI*2);c.fill();
     c.restore();
   }
 }
@@ -667,21 +688,30 @@ function initGame(){
   canvas.width=window.innerWidth;canvas.height=window.innerHeight;
   const W=canvas.width,H=canvas.height;
   const cx=W/2,cy=H/2;
-  // Arena começa cobrindo a tela toda (diagonal) e fecha até quase zero
   const ar=Math.hypot(W/2,H/2)*1.02;
   zone={cx,cy,r:ar,sr:ar,er:Math.min(W,H)*.05};
   snakes=[];sparks=[];parts=[];swaves=[];pups=[];
   gt=0;lt=0;alive=totPl;dorder=[];pdied=false;zwarn=0;spec=false;specTgt=null;nextPU=PUI;
 
-  for(let i=0;i<totPl;i++){
-    const ang=(i/totPl)*Math.PI*2;
-    const dist=Math.min(W,H)*.3;
-    const sx=cx+Math.cos(ang)*dist,sy=cy+Math.sin(ang)*dist;
-    const col=i===0?skin.color:SCOLS[i%SCOLS.length];
-    const nm=i===0?skin.name:BNAMES[i-1];
-    snakes.push(new Snake(sx,sy,ang+Math.PI,col,nm,i===0));
+  if(isMultiplayer){
+    // Multiplayer: spawn only MY snake at position given by server
+    const mySnakeData=serverSnakes[myId];
+    const sx=mySnakeData?scaleX(mySnakeData.x):cx;
+    const sy=mySnakeData?scaleY(mySnakeData.y):cy;
+    const ang=mySnakeData?mySnakeData.angle:0;
+    snakes.push(new Snake(sx,sy,ang,skin.color,skin.name,true));
+  } else {
+    // Single player: spawn player + bots
+    for(let i=0;i<totPl;i++){
+      const ang=(i/totPl)*Math.PI*2;
+      const dist=Math.min(W,H)*.3;
+      const sx=cx+Math.cos(ang)*dist,sy=cy+Math.sin(ang)*dist;
+      const col=i===0?skin.color:SCOLS[i%SCOLS.length];
+      const nm=i===0?skin.name:BNAMES[i-1];
+      snakes.push(new Snake(sx,sy,ang+Math.PI,col,nm,i===0));
+    }
+    spawnSparks(totPl*SPP);
   }
-  spawnSparks(totPl*SPP);
   mx=cx;my=cy;
   canvas.addEventListener('mousemove',onMM);canvas.addEventListener('mousedown',onMD);canvas.addEventListener('mouseup',onMU);
   canvas.addEventListener('touchmove',onTM,{passive:false});canvas.addEventListener('touchstart',onTS,{passive:true});canvas.addEventListener('touchend',onTE,{passive:true});
