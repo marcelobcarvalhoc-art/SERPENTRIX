@@ -137,8 +137,11 @@ function serverTick(roomId, dt) {
 
   const alive = () => Object.entries(r.snakes).filter(([,s])=>s.alive);
 
-  // Move
-  for (const [,s] of alive()) moveSnake(s, dt);
+  // Move apenas bots (jogadores movem no cliente e enviam posição)
+  // Como não há bots, este loop está vazio mas mantido para futura expansão
+  for (const [id,s] of alive()) {
+    if (s.isBot) moveSnake(s, dt); // sem bots ativos, nunca entra aqui
+  }
 
   // Zone deaths
   for (const [id,s] of alive()) {
@@ -237,10 +240,14 @@ io.on('connection', socket => {
     if (r.players.length >= 2 && !r.countdownTimer) startCountdown(myRoomId);
   });
 
-  socket.on('input', ({ targetAngle }) => {
+  socket.on('input', ({ targetAngle, x, y, angle, w, trail }) => {
     if (!myRoomId) return;
     const r = rooms[myRoomId]; if (!r?.snakes) return;
     const s = r.snakes[socket.id]; if (!s?.alive) return;
+    // Use client-reported position (client is authoritative for own movement)
+    if (x !== undefined) { s.x=x; s.y=y; s.angle=angle; }
+    if (w !== undefined) s.w = w;
+    if (trail?.length) s.trail = trail;
     s.targetAngle = targetAngle;
   });
 
