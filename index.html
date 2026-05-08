@@ -295,48 +295,15 @@ function noise(vol, dur, filterFreq){
   src.buffer=buf; src.connect(filt); filt.connect(g); g.connect(audioCtx.destination); src.start();
 }
 
-function playSparkSFX(){
-  if(!audioCtx) return;
-  tone(1200,'sine',.08,.07,700);
-}
+function playSparkSFX(){ try{ if(!audioCtx)return; tone(1200,'sine',.08,.07,700); }catch(e){} }
+function playDeathSFX(){ try{ if(!audioCtx)return; tone(90,'sawtooth',.3,.5,180); noise(.25,.3,400); setTimeout(()=>tone(45,'sine',.15,.4),80); }catch(e){} }
+function playEncircleSFX(){ try{ if(!audioCtx)return; tone(440,'square',.12,.1); setTimeout(()=>tone(660,'square',.12,.1),100); setTimeout(()=>tone(880,'square',.15,.2),200); }catch(e){} }
 
-function playDeathSFX(){
-  if(!audioCtx) return;
-  tone(90,'sawtooth',.3,.5,180);
-  noise(.25,.3,400);
-  setTimeout(()=>tone(45,'sine',.15,.4),80);
-}
-
-function playEncircleSFX(){
-  if(!audioCtx) return;
-  tone(440,'square',.12,.1);
-  setTimeout(()=>tone(660,'square',.12,.1),100);
-  setTimeout(()=>tone(880,'square',.15,.2),200);
-}
-
-// Lobby ambient music
 const LOBBY_SEQ=[130.81,164.81,196,246.94,196,164.81,130.81,98];
-function startLobbyMusic(){
-  if(!audioCtx) return; stopMusic(); musicPlaying=true; noteIdx=0;
-  function step(){ if(!musicPlaying) return; tone(LOBBY_SEQ[noteIdx%LOBBY_SEQ.length],'sine',.035,.55); noteIdx++; }
-  step(); beatInt=setInterval(step,520);
-}
-
-// Game adrenaline music
 const GAME_MEL=[220,277,330,370,330,247,220,185];
-function startGameMusic(){
-  if(!audioCtx) return; stopMusic(); musicPlaying=true; noteIdx=0;
-  function beat(){ if(!musicPlaying) return; tone(80,'square',.07,.12); }
-  function mel(){ if(!musicPlaying) return; tone(GAME_MEL[noteIdx%GAME_MEL.length],'sawtooth',.03,.18); noteIdx++; }
-  beat(); beatInt=setInterval(beat,300);
-  setTimeout(()=>{ mel(); melInt=setInterval(mel,220); },150);
-}
-
-function stopMusic(){
-  musicPlaying=false;
-  if(beatInt){clearInterval(beatInt);beatInt=null;}
-  if(melInt){clearInterval(melInt);melInt=null;}
-}
+function startLobbyMusic(){ try{ if(!audioCtx)return; stopMusic(); musicPlaying=true; noteIdx=0; function step(){ if(!musicPlaying)return; tone(LOBBY_SEQ[noteIdx%LOBBY_SEQ.length],'sine',.035,.55); noteIdx++; } step(); beatInt=setInterval(step,520); }catch(e){} }
+function startGameMusic(){ try{ if(!audioCtx)return; stopMusic(); musicPlaying=true; noteIdx=0; function beat(){ if(!musicPlaying)return; tone(80,'square',.07,.12); } function mel(){ if(!musicPlaying)return; tone(GAME_MEL[noteIdx%GAME_MEL.length],'sawtooth',.03,.18); noteIdx++; } beat(); beatInt=setInterval(beat,300); setTimeout(()=>{ mel(); melInt=setInterval(mel,220); },150); }catch(e){} }
+function stopMusic(){ try{ musicPlaying=false; if(beatInt){clearInterval(beatInt);beatInt=null;} if(melInt){clearInterval(melInt);melInt=null;} }catch(e){} }
 
 // ═══ MULTIPLAYER ═══
 const socket = io();
@@ -952,11 +919,15 @@ function onTS(){boosting=true;}function onTE(){boosting=false;}
 function showScreen(id){
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.getElementById('screen-'+id).classList.add('active');
-  if(id==='history')renderHist();if(id==='skin')buildSkinUI();updBalUI();
-  initAudio();
-  if(id==='lobby'||id==='landing'||id==='skin') startLobbyMusic();
-  else if(id==='game') startGameMusic();
-  else stopMusic();
+  if(id==='history')renderHist();
+  if(id==='skin')buildSkinUI();
+  updBalUI();
+  try{
+    initAudio();
+    if(id==='lobby'||id==='landing'||id==='skin'||id==='countdown') startLobbyMusic();
+    else if(id==='game') startGameMusic();
+    else stopMusic();
+  }catch(e){}
 }
 
 function buildRooms(){
