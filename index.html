@@ -392,29 +392,52 @@ function sendInput(){
   socket.emit('input',{
     targetAngle:me.tAng,
     x:toSrvX(me.x), y:toSrvY(me.y),
-    angle:me.ang, w:me.w,
+    angle:me.ang, w:me.w, mT:me.mT,
     trail
   });
 }
 
+// Interpola cobras do servidor suavemente entre atualizações
+function updateServerSnakeInterp(s, dt){
+  if(s.renderX===undefined){
+    s.renderX=scaleX(s.x); s.renderY=scaleY(s.y);
+    s.renderAngle=s.angle; s.renderTrail=[];
+  }
+  // Extrapola movimento local entre ticks do servidor
+  const spd=SPD*dt;
+  s.renderX+=Math.cos(s.renderAngle)*spd;
+  s.renderY+=Math.sin(s.renderAngle)*spd;
+  // Corrige suavemente em direção à posição real do servidor
+  const tx=scaleX(s.x), ty=scaleY(s.y);
+  s.renderX+=(tx-s.renderX)*0.18;
+  s.renderY+=(ty-s.renderY)*0.18;
+  // Interpola ângulo
+  let ad=s.angle-s.renderAngle;
+  while(ad>Math.PI)  ad-=Math.PI*2;
+  while(ad<-Math.PI) ad+=Math.PI*2;
+  s.renderAngle+=ad*0.25;
+  // Atualiza trail de renderização
+  if(!s.renderTrail) s.renderTrail=[];
+  s.renderTrail.unshift({x:s.renderX, y:s.renderY});
+  if(s.renderTrail.length>80) s.renderTrail.pop();
+}
+
 function drawServerSnakes(c){
   for(const[id,s] of Object.entries(serverSnakes)){
-    if(!s.alive||id===myId||!s.trail||s.trail.length<2)continue;
-    // Escala coords servidor → tela
-    const trail=s.trail.map(p=>({x:scaleX(p.x),y:scaleY(p.y)}));
-    const hx=scaleX(s.x),hy=scaleY(s.y);
+    if(!s.alive||id===myId) continue;
+    if(!s.renderTrail||s.renderTrail.length<2) continue;
     c.save();
     c.shadowColor=s.color;c.shadowBlur=s.w*.5;c.strokeStyle=s.color;
     c.lineWidth=s.w;c.lineCap='round';c.lineJoin='round';c.globalAlpha=.88;
-    c.beginPath();c.moveTo(trail[0].x,trail[0].y);
-    for(let i=1;i<trail.length;i++)c.lineTo(trail[i].x,trail[i].y);
+    c.beginPath();c.moveTo(s.renderTrail[0].x,s.renderTrail[0].y);
+    for(let i=1;i<s.renderTrail.length;i++) c.lineTo(s.renderTrail[i].x,s.renderTrail[i].y);
     c.stroke();
     c.fillStyle='#fff';c.shadowBlur=s.w*.6;
-    c.beginPath();c.arc(trail[0].x,trail[0].y,s.w*.28,0,Math.PI*2);c.fill();
+    c.beginPath();c.arc(s.renderTrail[0].x,s.renderTrail[0].y,s.w*.28,0,Math.PI*2);c.fill();
     c.shadowBlur=0;c.globalAlpha=.95;
     c.font=`bold ${Math.max(14,Math.min(22,s.w*.9+10))}px Rajdhani`;
     c.textAlign='center';c.fillStyle='#fff';c.shadowColor=s.color;c.shadowBlur=8;
-    c.fillText(s.name,trail[0].x,trail[0].y-s.w*.7-5);
+    c.fillText(s.name,s.renderTrail[0].x,s.renderTrail[0].y-s.w*.7-5);
     c.restore();
   }
 }
@@ -723,7 +746,10 @@ function initGame(){
 function gloop(ts){
   if(!gactive)return;if(!lt)lt=ts;
   const dt=Math.min((ts-lt)/1000,.05);lt=ts;gt+=dt;
-  upd(dt);draw();updHUD();
+  upd(dt);
+  // Interpola cobras do servidor a cada frame (suaviza movimento)
+  if(isMultiplayer) for(const[id,s] of Object.entries(serverSnakes)) if(s.alive&&id!==myId) updateServerSnakeInterp(s,dt);
+  draw();updHUD();
   if(isMultiplayer && Math.floor(gt*20)!==Math.floor((gt-dt)*20)) sendInput();
   aid=requestAnimationFrame(gloop);
 }
