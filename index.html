@@ -340,14 +340,15 @@ socket.on('gameStart', ({ players, snakes: initSnakes, zone: initZone, pot: sp }
 socket.on('tick',({snakes:ss,sparks:sp,zone:z,alive:al})=>{
   if(!isMultiplayer)return;
   if(z&&canvas){
-    // Escala raio do servidor (0-900) para tela do cliente
     const scl=Math.min(canvas.width,canvas.height)/900;
     zone.r=z.radius*scl;
   }
   if(al!==undefined)aliveCount=al;
   if(sp)serverSparks=sp;
   ss.forEach(s=>{
-    serverSnakes[s.id]=s;
+    // Preserva color e name do gameStart — tick não os reenvia
+    const prev=serverSnakes[s.id]||{};
+    serverSnakes[s.id]={color:prev.color||s.color,name:prev.name||s.name,...s};
     if(s.id===myId){
       const me=snakes.find(sn=>sn.isP);
       if(me&&me.alive&&!s.alive){me.alive=false;playerDied=true;isSpectating=true;}
