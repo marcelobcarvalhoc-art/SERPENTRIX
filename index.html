@@ -390,10 +390,10 @@ function drawServerSnakes(c) {
     c.stroke();
     c.fillStyle='#fff'; c.shadowBlur=s.w*.6;
     c.beginPath(); c.arc(s.trail[0].x, s.trail[0].y, s.w*.28, 0, Math.PI*2); c.fill();
-    c.shadowBlur=0; c.globalAlpha=.8;
-    c.font=`bold ${Math.max(8,Math.min(11,s.w*.6))}px Rajdhani`;
-    c.textAlign='center'; c.fillStyle=s.isBot?'rgba(255,255,255,.6)':'#fff';
-    c.fillText(s.name, s.trail[0].x, s.trail[0].y-s.w*.62-2);
+    c.shadowBlur=0;c.globalAlpha=.95;
+    c.font=`bold ${Math.max(14,Math.min(22,s.w*.9+10))}px Rajdhani`;
+    c.textAlign='center';c.fillStyle='#fff';c.shadowColor=s.color;c.shadowBlur=8;
+    c.fillText(s.name, s.trail[0].x, s.trail[0].y-s.w*.7-5);
     c.restore();
   }
 }
@@ -584,9 +584,10 @@ class Snake{
     c.beginPath();c.arc(this.trail[0].x,this.trail[0].y,this.w*.28,0,Math.PI*2);c.fill();
     const eo=this.w*.25,er=Math.max(1.5,this.w*.1);c.shadowBlur=0;c.fillStyle='#111';
     for(const sg of[1,-1]){c.beginPath();c.arc(this.trail[0].x-Math.sin(this.ang)*eo*sg,this.trail[0].y+Math.cos(this.ang)*eo*sg,er,0,Math.PI*2);c.fill();}
-    c.globalAlpha=.75;const ts=Math.max(8,Math.min(11,this.w*.6));
-    c.font=`bold ${ts}px Rajdhani`;c.textAlign='center';c.fillStyle='#fff';c.shadowBlur=0;
-    c.fillText(this.nm,this.trail[0].x,this.trail[0].y-this.w*.62-2);
+    c.globalAlpha=.95;const ts=Math.max(14,Math.min(22,this.w*.9+10));
+    c.font=`bold ${ts}px Rajdhani`;c.textAlign='center';c.fillStyle='#fff';
+    c.shadowColor=this.col;c.shadowBlur=8;
+    c.fillText(this.nm,this.trail[0].x,this.trail[0].y-this.w*.7-5);
     if(this.ot>0){const rem=(ZGRACE-this.ot).toFixed(1);c.fillStyle='#ff1744';c.shadowColor='#ff1744';c.shadowBlur=7;c.font=`bold ${Math.max(8,this.w*.85)}px Orbitron`;c.fillText(rem,this.trail[0].x,this.trail[0].y-this.w-14);}
     let ri=0;
     for(const[type,rem] of Object.entries(this.efx)){
@@ -664,13 +665,17 @@ function bombExplode(x,y,picker){
 function initGame(){
   canvas=document.getElementById('gameCanvas');ctx=canvas.getContext('2d');
   canvas.width=window.innerWidth;canvas.height=window.innerHeight;
-  const W=canvas.width,H=canvas.height,ar=Math.min(W,H)*.45,cx=W/2,cy=H/2;
-  zone={cx,cy,r:ar,sr:ar,er:ar*.08};
+  const W=canvas.width,H=canvas.height;
+  const cx=W/2,cy=H/2;
+  // Arena começa cobrindo a tela toda (diagonal) e fecha até quase zero
+  const ar=Math.hypot(W/2,H/2)*1.02;
+  zone={cx,cy,r:ar,sr:ar,er:Math.min(W,H)*.05};
   snakes=[];sparks=[];parts=[];swaves=[];pups=[];
   gt=0;lt=0;alive=totPl;dorder=[];pdied=false;zwarn=0;spec=false;specTgt=null;nextPU=PUI;
 
   for(let i=0;i<totPl;i++){
-    const ang=(i/totPl)*Math.PI*2;const dist=ar*.62;
+    const ang=(i/totPl)*Math.PI*2;
+    const dist=Math.min(W,H)*.3;
     const sx=cx+Math.cos(ang)*dist,sy=cy+Math.sin(ang)*dist;
     const col=i===0?skin.color:SCOLS[i%SCOLS.length];
     const nm=i===0?skin.name:BNAMES[i-1];
