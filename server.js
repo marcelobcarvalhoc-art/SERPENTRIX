@@ -212,7 +212,7 @@ function serverTick(roomId, dt) {
     snakes: Object.entries(r.snakes).map(([id,s]) => ({
       id, x:s.x, y:s.y, angle:s.angle, w:s.w, alive:s.alive,
       color:s.color, name:s.name,
-      trail: s.trail.filter((_,i)=>i%4===0).slice(0,35),
+      trail: s.trail.filter((_,i)=>i%2===0).slice(0,60),
     })),
     sparks: r.sparks.slice(0,80),
     alive:  alive().length,
