@@ -30,6 +30,16 @@ const ARENA=900, CX=450, CY=450;
 
 const rooms = {};
 
+// ── Broadcast global room status (lobby counts) ──
+setInterval(() => {
+  const status = { BRONZE:0, PRATA:0, OURO:0, DIAMANTE:0 };
+  for (const r of Object.values(rooms)) {
+    if (!r.started && status[r.type] !== undefined)
+      status[r.type] += r.players.length;
+  }
+  io.emit('roomStatus', status);
+}, 2000);
+
 // ── SNAKE ───────────────────────────────
 function makeSnake(x, y, angle, color, name) {
   const trail = [];
@@ -65,26 +75,44 @@ function spawnSparks(n, radius) {
   return arr;
 }
 
-// ── ROOMS ───────────────────────────────
+// ── ROOM HELPERS ─────────────────────────
 function findOrCreateRoom(type) {
   const cfg = ROOM_CFG[type];
   for (const [id, r] of Object.entries(rooms))
     if (r.type===type && !r.started && r.players.length < cfg.maxPlayers) return id;
   const id = `${type}_${Date.now()}`;
-  rooms[id] = { type, players:[], started:false, countdownTimer:null, gameLoop:null };
+  rooms[id] = { type, players:[], started:false, countdownTimer:null, gameLoop:null, voteKick:{}, kickTimer:null };
   return id;
 }
 
-function broadcastLobby(roomId) {
-  const r = rooms[roomId]; if (!r) return;
-  io.to(roomId).emit('lobbyUpdate', {
-    players: r.players.map(p=>({ id:p.id, name:p.name, color:p.color })),
+function waitingPayload(r) {
+  const readyCount = r.players.filter(p=>p.ready).length;
+  return {
+    players:    r.players.map(p=>({ id:p.id, name:p.name, color:p.color, ready:!!p.ready })),
+    readyCount,
+    totalCount: r.players.length,
     maxPlayers: ROOM_CFG[r.type].maxPlayers,
-  });
+    roomName:   r.type,
+    pot:        ROOM_CFG[r.type].fee * r.players.length,
+    voteKick:   Object.fromEntries(
+      Object.entries(r.voteKick).map(([tid, voters]) => [tid, { votes: voters.size, needed: Math.ceil(r.players.length/2) }])
+    ),
+  };
+}
+
+function broadcastWaiting(roomId) {
+  const r = rooms[roomId]; if (!r) return;
+  io.to(roomId).emit('waitingUpdate', waitingPayload(r));
+}
+
+function checkAllReady(roomId) {
+  const r = rooms[roomId]; if (!r || r.started || r.countdownTimer) return;
+  if (r.players.length >= 2 && r.players.every(p => p.ready))
+    startCountdown(roomId);
 }
 
 function startCountdown(roomId) {
-  const r = rooms[roomId]; if (!r||r.countdownTimer) return;
+  const r = rooms[roomId]; if (!r || r.countdownTimer) return;
   let secs = 5;
   io.to(roomId).emit('countdown', { secs });
   r.countdownTimer = setInterval(() => {
@@ -103,16 +131,13 @@ function startServerGame(roomId) {
   r.snakes = {};
   r.sparks = spawnSparks(r.players.length * 3, initialR);
   r.gameTime = 0;
-  r.aliveCount = r.players.length;
 
-  // Spawn only real players
   const n = r.players.length;
   r.players.forEach((p, i) => {
     const ang = (i/n)*Math.PI*2;
-    const dist = initialR * 0.62;
     r.snakes[p.id] = makeSnake(
-      CX + Math.cos(ang)*dist,
-      CY + Math.sin(ang)*dist,
+      CX + Math.cos(ang)*initialR*0.62,
+      CY + Math.sin(ang)*initialR*0.62,
       ang + Math.PI, p.color, p.name
     );
   });
@@ -120,7 +145,7 @@ function startServerGame(roomId) {
   io.to(roomId).emit('gameStart', {
     players: r.players.map(p=>({ id:p.id, name:p.name, color:p.color })),
     snakes:  Object.entries(r.snakes).map(([id,s])=>({ id, x:s.x, y:s.y, angle:s.angle, color:s.color, name:s.name })),
-    zone:    { cx:CX, cy:CY, radius:initialR, startRadius:initialR, endRadius:initialR*0.08 },
+    zone:    { cx:CX, cy:CY, radius:initialR, startRadius:initialR },
     pot:     ROOM_CFG[r.type].fee * r.players.length,
   });
 
@@ -131,19 +156,15 @@ function serverTick(roomId, dt) {
   const r = rooms[roomId]; if (!r||!r.started) return;
   r.gameTime += dt;
 
-  // Zone shrink
   const zp = Math.min(1, r.gameTime/GDUR);
   r.zone.radius = r.zone.startRadius + (r.zone.endRadius - r.zone.startRadius)*zp;
 
   const alive = () => Object.entries(r.snakes).filter(([,s])=>s.alive);
 
-  // Move apenas bots (jogadores movem no cliente e enviam posição)
-  // Como não há bots, este loop está vazio mas mantido para futura expansão
   for (const [id,s] of alive()) {
-    if (s.isBot) moveSnake(s, dt); // sem bots ativos, nunca entra aqui
+    if (s.isBot) moveSnake(s, dt);
   }
 
-  // Zone deaths
   for (const [id,s] of alive()) {
     const dc = Math.hypot(s.x-CX, s.y-CY);
     if (dc > r.zone.radius) {
@@ -152,20 +173,17 @@ function serverTick(roomId, dt) {
     } else s.outsideTime = Math.max(0, s.outsideTime - dt*0.4);
   }
 
-  // Spark collision
   for (const [,s] of alive()) {
     for (let i = r.sparks.length-1; i >= 0; i--) {
       const sp = r.sparks[i];
       if (Math.hypot(sp.x-s.x, sp.y-s.y) < s.w*0.5+sp.sz*0.5) {
-        r.sparks.splice(i, 1);
-        s.mT = Math.min(s.mT+2, 300);
+        r.sparks.splice(i, 1); s.mT = Math.min(s.mT+2, 300);
       }
     }
   }
-  if (r.sparks.filter(sp=>!sp.isDeath).length < alive().length * 1.5)
+  if (r.sparks.filter(sp=>!sp.isDeath).length < alive().length*1.5)
     r.sparks.push(...spawnSparks(3, r.zone.radius));
 
-  // Head-body collision
   const al = alive();
   for (let i=0; i<al.length; i++) {
     const [idA,a] = al[i]; if (!a.alive) continue;
@@ -179,7 +197,6 @@ function serverTick(roomId, dt) {
       }
     }
     if (!a.alive) continue;
-    // Head-to-head
     for (let j=i+1; j<al.length; j++) {
       const [idB,b] = al[j]; if (!b.alive) continue;
       if (Math.hypot(a.x-b.x, a.y-b.y) < (a.w+b.w)*0.5) {
@@ -190,7 +207,6 @@ function serverTick(roomId, dt) {
     }
   }
 
-  // Broadcast
   io.to(roomId).emit('tick', {
     zone:   { radius: r.zone.radius },
     snakes: Object.entries(r.snakes).map(([id,s]) => ({
@@ -202,28 +218,20 @@ function serverTick(roomId, dt) {
     alive:  alive().length,
   });
 
-  // Win condition
   const living = alive();
   if (living.length <= 1 || r.gameTime >= GDUR) {
     clearInterval(r.gameLoop); r.gameLoop = null;
     let winnerId = null;
-    if (living.length === 1) {
-      winnerId = living[0][0];
-    } else if (living.length > 1) {
-      // Quem cresceu mais (maior trail) vence por tempo
-      winnerId = living.sort((a,b) => (b[1].mT||50) - (a[1].mT||50))[0][0];
-    }
-    io.to(roomId).emit('playerWon', {
-      id:   winnerId,
-      name: winnerId ? r.snakes[winnerId].name : null,
-    });
+    if (living.length === 1) winnerId = living[0][0];
+    else if (living.length > 1) winnerId = living.sort((a,b)=>(b[1].mT||50)-(a[1].mT||50))[0][0];
+    io.to(roomId).emit('playerWon', { id: winnerId, name: winnerId ? r.snakes[winnerId].name : null });
   }
 }
 
 function serverKill(roomId, victimId, killerId, reason) {
   const r = rooms[roomId]; if (!r) return;
   const s = r.snakes[victimId]; if (!s||!s.alive) return;
-  s.alive = false; r.aliveCount--;
+  s.alive = false;
   const cnt = Math.max(2, Math.floor(s.trail.length/14));
   for (let i=0; i<cnt; i++) {
     const t = s.trail[Math.floor(Math.random()*s.trail.length)];
@@ -236,23 +244,69 @@ function serverKill(roomId, victimId, killerId, reason) {
 io.on('connection', socket => {
   let myRoomId = null;
 
+  // Entrar na sala
   socket.on('joinRoom', ({ type, name, color }) => {
     if (!ROOM_CFG[type]) return;
     myRoomId = findOrCreateRoom(type);
     const r = rooms[myRoomId];
-    r.players.push({ id:socket.id, name, color });
+    r.players.push({ id:socket.id, name, color, ready:false });
     socket.join(myRoomId);
     socket.emit('roomJoined', { roomId:myRoomId, playerId:socket.id });
-    broadcastLobby(myRoomId);
-    if (r.players.length >= 2 && !r.countdownTimer) startCountdown(myRoomId);
+    broadcastWaiting(myRoomId);
   });
 
+  // Player marca READY / unready
+  socket.on('setReady', ({ ready }) => {
+    const r = rooms[myRoomId]; if (!r||r.started) return;
+    const p = r.players.find(p=>p.id===socket.id); if (!p) return;
+    p.ready = ready;
+    broadcastWaiting(myRoomId);
+    checkAllReady(myRoomId);
+
+    // Iniciar timer de votação de kick se maioria pronta e algum não
+    const readyCount = r.players.filter(p=>p.ready).length;
+    const notReady   = r.players.filter(p=>!p.ready);
+    if (readyCount >= Math.ceil(r.players.length/2) && notReady.length > 0) {
+      if (!r.kickTimer) {
+        r.kickTimer = setTimeout(() => {
+          // Disponibilizar votação de kick para os não-prontos
+          const nr = r.players.filter(p=>!p.ready);
+          if (nr.length > 0) {
+            io.to(myRoomId).emit('kickVoteAvailable', { targets: nr.map(p=>({ id:p.id, name:p.name })) });
+          }
+        }, 30000); // 30 segundos
+      }
+    } else {
+      if (r.kickTimer) { clearTimeout(r.kickTimer); r.kickTimer=null; }
+    }
+  });
+
+  // Votar kick
+  socket.on('voteKick', ({ targetId }) => {
+    const r = rooms[myRoomId]; if (!r||r.started) return;
+    if (!r.voteKick[targetId]) r.voteKick[targetId] = new Set();
+    r.voteKick[targetId].add(socket.id);
+    const votes   = r.voteKick[targetId].size;
+    const needed  = Math.ceil(r.players.length / 2);
+    const target  = r.players.find(p=>p.id===targetId);
+    broadcastWaiting(myRoomId);
+    if (votes >= needed && target) {
+      // Kick player
+      delete r.voteKick[targetId];
+      r.players = r.players.filter(p=>p.id!==targetId);
+      io.to(targetId).emit('kicked', { reason:'Votação da sala' });
+      io.to(myRoomId).emit('playerLeft', { id:targetId });
+      broadcastWaiting(myRoomId);
+      checkAllReady(myRoomId);
+    }
+  });
+
+  // Input do jogo
   socket.on('input', (data) => {
     const { targetAngle, x, y, angle, w, mT, trail } = data;
     if (!myRoomId) return;
     const r = rooms[myRoomId]; if (!r?.snakes) return;
     const s = r.snakes[socket.id]; if (!s?.alive) return;
-    // Use client-reported position (client is authoritative for own movement)
     if (x !== undefined) { s.x=x; s.y=y; s.angle=angle; }
     if (w  !== undefined) s.w  = w;
     if (typeof mT !== 'undefined') s.mT = mT;
@@ -268,9 +322,11 @@ io.on('connection', socket => {
       r.snakes[socket.id].alive = false;
       io.to(myRoomId).emit('snakeDied', { id:socket.id, reason:'desconectou' });
     }
+    if (!r.started) broadcastWaiting(myRoomId);
     if (r.players.length === 0) {
       if (r.countdownTimer) clearInterval(r.countdownTimer);
       if (r.gameLoop)       clearInterval(r.gameLoop);
+      if (r.kickTimer)      clearTimeout(r.kickTimer);
       delete rooms[myRoomId];
     }
   });
