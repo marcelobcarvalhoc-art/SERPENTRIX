@@ -201,6 +201,19 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:#fff
   </div>
 </div>
 
+<!-- WAITING ROOM -->
+<div id="screen-waiting" class="screen">
+  <div style="text-align:center;z-index:1;width:100%;max-width:600px;padding:1.5rem;">
+    <div id="waitRoomName" style="font-family:'Orbitron',monospace;font-size:.8rem;letter-spacing:.3em;color:var(--cyan);margin-bottom:.3rem;">SALA BRONZE</div>
+    <div id="waitPot" style="font-family:'Orbitron',monospace;font-size:1.3rem;font-weight:700;color:var(--gold);margin-bottom:1.2rem;">💰 POT: $0.00</div>
+    <div id="waitCount" style="font-size:.85rem;letter-spacing:.15em;color:rgba(255,255,255,.5);margin-bottom:1rem;">0/0 jogadores</div>
+    <div id="waitPlayerList" style="display:flex;flex-direction:column;gap:.5rem;margin-bottom:1.5rem;max-height:50vh;overflow-y:auto;"></div>
+    <button id="btnReady" onclick="toggleReady()" style="font-family:'Orbitron',monospace;font-size:.95rem;font-weight:700;letter-spacing:.15em;padding:.85rem 2.5rem;border:2px solid var(--green);background:transparent;color:var(--green);cursor:pointer;transition:.3s;width:100%;max-width:300px;">✅ ESTOU PRONTO</button>
+    <div id="waitKickArea" style="margin-top:1.2rem;"></div>
+    <div style="margin-top:1rem;"><button class="btn-sm" onclick="leaveWaiting()">← SAIR DA SALA</button></div>
+  </div>
+</div>
+
 <!-- COUNTDOWN -->
 <div id="screen-countdown" class="screen">
   <div class="cdw">
@@ -314,19 +327,61 @@ let serverSparks = [];
 let inputInterval = null;
 
 socket.on('connect', () => { myId = socket.id; });
-socket.on('roomJoined', d => { myId = d.playerId; isMultiplayer = true; });
+socket.on('roomJoined', d => { myId = d.playerId; isMultiplayer = true; showScreen('waiting'); });
 
-socket.on('lobbyUpdate', ({ players, maxPlayers }) => {
-  const el = document.getElementById('mpCount');
-  if (el) el.textContent = `👥 ${players.length}/${maxPlayers} online`;
+socket.on('waitingUpdate', ({ players, readyCount, totalCount, maxPlayers, roomName, pot: p, voteKick }) => {
+  if (p) pot = p;
+  const el = id => document.getElementById(id);
+  el('waitRoomName').textContent = `SALA ${roomName}`;
+  el('waitPot').textContent = `💰 POT: $${pot.toFixed(2)}`;
+  el('waitCount').textContent = `👥 ${totalCount}/${maxPlayers} na sala — ${readyCount}/${totalCount} prontos`;
+  el('waitPlayerList').innerHTML = players.map(p => `
+    <div style="display:flex;align-items:center;gap:.8rem;padding:.5rem .8rem;background:rgba(255,255,255,.04);border-left:3px solid ${p.color}">
+      <div style="width:10px;height:10px;border-radius:50%;background:${p.color};box-shadow:0 0 8px ${p.color}"></div>
+      <span style="flex:1;font-weight:600">${p.name}${p.id===myId?' <span style="color:var(--cyan);font-size:.75rem">(VOCÊ)</span>':''}</span>
+      <span style="font-size:.8rem;font-weight:700;color:${p.ready?'var(--green)':'rgba(255,255,255,.35)'}">${p.ready?'✅ PRONTO':'⏳ AGUARDANDO'}</span>
+      ${voteKick&&voteKick[p.id]?`<span style="font-size:.7rem;color:var(--red)">🚫 ${voteKick[p.id].votes}/${voteKick[p.id].needed}</span>`:''}
+    </div>`).join('');
+  const me = players.find(p=>p.id===myId);
+  const btn = el('btnReady');
+  if (btn) {
+    if (me?.ready) { btn.textContent='❌ CANCELAR'; btn.style.borderColor='var(--red)'; btn.style.color='var(--red)'; }
+    else           { btn.textContent='✅ ESTOU PRONTO'; btn.style.borderColor='var(--green)'; btn.style.color='var(--green)'; }
+  }
 });
 
+socket.on('kickVoteAvailable', ({ targets }) => {
+  const area = document.getElementById('waitKickArea');
+  if (!area) return;
+  area.innerHTML = `<div style="font-size:.72rem;color:var(--orange);letter-spacing:.1em;margin-bottom:.5rem;">⏰ MAIORIA PRONTA — VOTE PARA KICKAR:</div>` +
+    targets.map(t=>`<button onclick="castVoteKick('${t.id}')" style="font-family:'Orbitron',monospace;font-size:.68rem;padding:.35rem .9rem;border:1px solid var(--red);background:rgba(255,23,68,.08);color:var(--red);cursor:pointer;margin:.2rem;letter-spacing:.08em;">🚫 KICKAR ${t.name}</button>`).join('');
+});
+
+socket.on('kicked', ({ reason }) => { alert(`Você foi removido: ${reason}`); showLobby(); });
+
+socket.on('playerLeft', () => { /* handled by waitingUpdate */ });
+
 socket.on('countdown', ({ secs }) => {
+  showScreen('countdown');
   const el = document.getElementById('cdNum');
   if (!el) return;
   if (secs === 0) { el.textContent = 'GO!'; el.className = 'cdgo'; }
   else { el.textContent = secs; el.className = ''; void el.offsetWidth; el.className = 'cdnum'; }
 });
+
+socket.on('roomStatus', (status) => {
+  Object.entries(status).forEach(([type, count]) => {
+    const el = document.getElementById(`roomCount_${type}`);
+    if (el) el.textContent = `🟢 ${count} online`;
+  });
+});
+
+socket.on('lobbyUpdate', () => {}); // legacy, ignorado
+
+let myReady = false;
+function toggleReady() { myReady=!myReady; socket.emit('setReady',{ready:myReady}); }
+function castVoteKick(targetId) { socket.emit('voteKick',{targetId}); }
+function leaveWaiting() { myReady=false; showLobby(); }
 
 socket.on('gameStart', ({ players, snakes: initSnakes, zone: initZone, pot: sp }) => {
   if (sp) pot = sp;
@@ -360,6 +415,7 @@ socket.on('tick',({snakes:ss,sparks:sp,zone:z,alive:al})=>{
 
 // Server-authoritative death
 socket.on('snakeDied', ({ id, reason }) => {
+  if(serverSnakes[id]){ serverSnakes[id].alive=false; serverSnakes[id].localTrail=[]; }
   if (id === myId) {
     const me = snakes.find(s => s.isP);
     if (me) { me.alive = false; }
@@ -399,47 +455,38 @@ function sendInput(){
   });
 }
 
-// Interpola cobras do servidor suavemente entre atualizações
-function updateServerSnakeInterp(s, dt){
-  if(s.renderX===undefined){
-    s.renderX=scaleX(s.x); s.renderY=scaleY(s.y);
-    s.renderAngle=s.angle; s.renderTrail=[];
+function updateServerSnakeSmooth(s, dt){
+  if(s.smoothX===undefined){
+    s.smoothX=scaleX(s.x); s.smoothY=scaleY(s.y);
+    s.localTrail=[];
   }
-  // Extrapola movimento local entre ticks do servidor
-  const spd=SPD*dt;
-  s.renderX+=Math.cos(s.renderAngle)*spd;
-  s.renderY+=Math.sin(s.renderAngle)*spd;
-  // Corrige suavemente em direção à posição real do servidor
+  // Lerp suave em direção à posição real do servidor
   const tx=scaleX(s.x), ty=scaleY(s.y);
-  s.renderX+=(tx-s.renderX)*0.18;
-  s.renderY+=(ty-s.renderY)*0.18;
-  // Interpola ângulo
-  let ad=s.angle-s.renderAngle;
-  while(ad>Math.PI)  ad-=Math.PI*2;
-  while(ad<-Math.PI) ad+=Math.PI*2;
-  s.renderAngle+=ad*0.25;
-  // Atualiza trail de renderização
-  if(!s.renderTrail) s.renderTrail=[];
-  s.renderTrail.unshift({x:s.renderX, y:s.renderY});
-  if(s.renderTrail.length>80) s.renderTrail.pop();
+  s.smoothX+=(tx-s.smoothX)*0.22;
+  s.smoothY+=(ty-s.smoothY)*0.22;
+  // Acumula trail local a 60fps — garante movimento suave
+  s.localTrail.unshift({x:s.smoothX, y:s.smoothY});
+  const maxLen=Math.max(40, (s.mT||50)*0.8);
+  if(s.localTrail.length>maxLen) s.localTrail.pop();
 }
 
 function drawServerSnakes(c){
   for(const[id,s] of Object.entries(serverSnakes)){
-    if(!s.alive||id===myId) continue;
-    if(!s.renderTrail||s.renderTrail.length<2) continue;
+    if(!s.alive||id===myId||!s.localTrail||s.localTrail.length<2)continue;
     c.save();
     c.shadowColor=s.color;c.shadowBlur=s.w*.5;c.strokeStyle=s.color;
     c.lineWidth=s.w;c.lineCap='round';c.lineJoin='round';c.globalAlpha=.88;
-    c.beginPath();c.moveTo(s.renderTrail[0].x,s.renderTrail[0].y);
-    for(let i=1;i<s.renderTrail.length;i++) c.lineTo(s.renderTrail[i].x,s.renderTrail[i].y);
+    c.beginPath();c.moveTo(s.localTrail[0].x,s.localTrail[0].y);
+    for(let i=1;i<s.localTrail.length;i++) c.lineTo(s.localTrail[i].x,s.localTrail[i].y);
     c.stroke();
+    // Cabeça
     c.fillStyle='#fff';c.shadowBlur=s.w*.6;
-    c.beginPath();c.arc(s.renderTrail[0].x,s.renderTrail[0].y,s.w*.28,0,Math.PI*2);c.fill();
+    c.beginPath();c.arc(s.localTrail[0].x,s.localTrail[0].y,s.w*.28,0,Math.PI*2);c.fill();
+    // Nome
     c.shadowBlur=0;c.globalAlpha=.95;
     c.font=`bold ${Math.max(14,Math.min(22,s.w*.9+10))}px Rajdhani`;
     c.textAlign='center';c.fillStyle='#fff';c.shadowColor=s.color;c.shadowBlur=8;
-    c.fillText(s.name,s.renderTrail[0].x,s.renderTrail[0].y-s.w*.7-5);
+    c.fillText(s.name,s.localTrail[0].x,s.localTrail[0].y-s.w*.7-5);
     c.restore();
   }
 }
@@ -750,7 +797,7 @@ function gloop(ts){
   const dt=Math.min((ts-lt)/1000,.05);lt=ts;gt+=dt;
   upd(dt);
   // Interpola cobras do servidor a cada frame (suaviza movimento)
-  if(isMultiplayer) for(const[id,s] of Object.entries(serverSnakes)) if(s.alive&&id!==myId) updateServerSnakeInterp(s,dt);
+  if(isMultiplayer) for(const[id,s] of Object.entries(serverSnakes)) if(s.alive&&id!==myId) updateServerSnakeSmooth(s,dt);
   draw();updHUD();
   if(isMultiplayer && Math.floor(gt*20)!==Math.floor((gt-dt)*20)) sendInput();
   aid=requestAnimationFrame(gloop);
@@ -1084,10 +1131,10 @@ function buildRooms(){
     grid.innerHTML+=`<div class="rcard${ca?'':' nofunds'}" onclick="${ca?`selRoom(${r.id},${r.fee},${r.pl})`:'noFunds()'}" id="room${r.id}">
       ${r.hot?'<div class="rbadge">🔥 POPULAR</div>':''}
       <div class="rfee" style="color:${r.c}">$${r.fee}<small>ENTRADA</small></div>
-      <div class="rplayers" style="color:${r.c};opacity:.72">👥 ${w}/${r.pl} prontos</div>
-      <div class="rpot">💰 Pot: $${pa}</div>
+      <div class="rplayers" style="color:${r.c};opacity:.72">max ${r.pl} jogadores</div>
+      <div id="roomCount_${r.n}" style="font-size:.78rem;color:var(--green);margin:.3rem 0;font-weight:600;">🟢 0 online</div>
+      <div class="rpot">💰 Pot máx: $${pa}</div>
       ${!ca?`<div style="font-size:.62rem;color:var(--red);margin-top:.35rem;">⛔ SALDO INSUFICIENTE</div>`:''}
-      <div class="rdots" style="max-height:34px;overflow:hidden;">${dots}</div>
     </div>`;
   });
 }
@@ -1120,15 +1167,10 @@ function selRoom(id,fee,pl){_selRoomId=id;efee=fee;totPl=pl;curRoom=ROOMS.find(r
 function enterRoom(){
   const room=ROOMS.find(r=>r.id===_selRoomId)||ROOMS[0];
   if(getBal()<room.fee){noFunds();return;}
-  setBal(getBal()-room.fee);updBalUI();totPl=room.pl;pot=room.fee*room.pl;efee=room.fee;curRoom=room;
-  document.getElementById('cdRoom').textContent=`SALA ${room.n} — aguardando jogadores...`;
-  document.getElementById('cdPot').textContent=`💰 POT estimado: $${pot.toFixed(2)}`;
-  document.getElementById('cdNum').textContent='...';
-  document.getElementById('cdNum').className='cdnum';
-  document.getElementById('cdPl').innerHTML=`<div style="color:rgba(255,255,255,.5);font-size:.8rem;letter-spacing:.1em;">Conectando ao servidor...</div>`;
-  showScreen('countdown');
-  // Emit to server — server controls countdown & gameStart
-  socket.emit('joinRoom', { type: room.n, name: skin.name, color: skin.color, pat: skin.pat });
+  setBal(getBal()-room.fee);updBalUI();
+  totPl=room.pl;pot=room.fee*room.pl;efee=room.fee;curRoom=room;myReady=false;
+  // Envia joinRoom — servidor responde com roomJoined → showScreen('waiting')
+  socket.emit('joinRoom',{type:room.n,name:skin.name,color:skin.color});
 }
 function showLobby(){buildRooms();showScreen('lobby');selRoom(1,1,20);document.getElementById('room1')?.classList.add('selected');}
 
