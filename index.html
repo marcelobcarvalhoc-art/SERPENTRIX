@@ -455,38 +455,34 @@ function sendInput(){
   });
 }
 
-function updateServerSnakeSmooth(s, dt){
-  if(s.smoothX===undefined){
-    s.smoothX=scaleX(s.x); s.smoothY=scaleY(s.y);
-    s.localTrail=[];
-  }
-  // Lerp suave em direção à posição real do servidor
-  const tx=scaleX(s.x), ty=scaleY(s.y);
-  s.smoothX+=(tx-s.smoothX)*0.22;
-  s.smoothY+=(ty-s.smoothY)*0.22;
-  // Acumula trail local a 60fps — garante movimento suave
-  s.localTrail.unshift({x:s.smoothX, y:s.smoothY});
-  const maxLen=Math.max(40, (s.mT||50)*0.8);
-  if(s.localTrail.length>maxLen) s.localTrail.pop();
+function updateServerSnakeSmooth(s){
+  // Só suaviza a cabeça — corpo usa trail real do servidor
+  if(s.smoothX===undefined){ s.smoothX=scaleX(s.x); s.smoothY=scaleY(s.y); }
+  s.smoothX+=(scaleX(s.x)-s.smoothX)*0.28;
+  s.smoothY+=(scaleY(s.y)-s.smoothY)*0.28;
 }
 
 function drawServerSnakes(c){
   for(const[id,s] of Object.entries(serverSnakes)){
-    if(!s.alive||id===myId||!s.localTrail||s.localTrail.length<2)continue;
+    if(!s.alive||id===myId||!s.trail||s.trail.length<2) continue;
+    updateServerSnakeSmooth(s);
+    // Escala o trail do servidor para coords da tela
+    const trail=s.trail.map((p,i)=>
+      i===0 ? {x:s.smoothX, y:s.smoothY}      // cabeça suavizada
+            : {x:scaleX(p.x), y:scaleY(p.y)}   // corpo real do servidor
+    );
     c.save();
     c.shadowColor=s.color;c.shadowBlur=s.w*.5;c.strokeStyle=s.color;
     c.lineWidth=s.w;c.lineCap='round';c.lineJoin='round';c.globalAlpha=.88;
-    c.beginPath();c.moveTo(s.localTrail[0].x,s.localTrail[0].y);
-    for(let i=1;i<s.localTrail.length;i++) c.lineTo(s.localTrail[i].x,s.localTrail[i].y);
+    c.beginPath();c.moveTo(trail[0].x,trail[0].y);
+    for(let i=1;i<trail.length;i++) c.lineTo(trail[i].x,trail[i].y);
     c.stroke();
-    // Cabeça
     c.fillStyle='#fff';c.shadowBlur=s.w*.6;
-    c.beginPath();c.arc(s.localTrail[0].x,s.localTrail[0].y,s.w*.28,0,Math.PI*2);c.fill();
-    // Nome
+    c.beginPath();c.arc(trail[0].x,trail[0].y,s.w*.28,0,Math.PI*2);c.fill();
     c.shadowBlur=0;c.globalAlpha=.95;
     c.font=`bold ${Math.max(14,Math.min(22,s.w*.9+10))}px Rajdhani`;
     c.textAlign='center';c.fillStyle='#fff';c.shadowColor=s.color;c.shadowBlur=8;
-    c.fillText(s.name,s.localTrail[0].x,s.localTrail[0].y-s.w*.7-5);
+    c.fillText(s.name,trail[0].x,trail[0].y-s.w*.7-5);
     c.restore();
   }
 }
@@ -797,7 +793,7 @@ function gloop(ts){
   const dt=Math.min((ts-lt)/1000,.05);lt=ts;gt+=dt;
   upd(dt);
   // Interpola cobras do servidor a cada frame (suaviza movimento)
-  if(isMultiplayer) for(const[id,s] of Object.entries(serverSnakes)) if(s.alive&&id!==myId) updateServerSnakeSmooth(s,dt);
+  if(isMultiplayer) for(const[id,s] of Object.entries(serverSnakes)) if(s.alive&&id!==myId) updateServerSnakeSmooth(s);
   draw();updHUD();
   if(isMultiplayer && Math.floor(gt*20)!==Math.floor((gt-dt)*20)) sendInput();
   aid=requestAnimationFrame(gloop);
